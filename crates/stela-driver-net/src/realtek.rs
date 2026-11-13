@@ -188,6 +188,29 @@ impl Registers for Mmio {
         self.write32(o, v)
     }
 }
+/// The register window while the revision is detected: detection widens it
+/// once it has checked that the BAR covers and maps the detected layout.
+struct Window(core::cell::Cell<Mmio>);
+impl Registers for Window {
+    fn read8(&self, o: usize) -> u8 {
+        self.0.get().read8(o)
+    }
+    fn read16(&self, o: usize) -> u16 {
+        self.0.get().read16(o)
+    }
+    fn read32(&self, o: usize) -> u32 {
+        self.0.get().read32(o)
+    }
+    fn write8(&self, o: usize, v: u8) {
+        self.0.get().write8(o, v)
+    }
+    fn write16(&self, o: usize, v: u16) {
+        self.0.get().write16(o, v)
+    }
+    fn write32(&self, o: usize, v: u32) {
+        self.0.get().write32(o, v)
+    }
+}
 trait Timer {
     fn now(&self) -> u64;
     #[track_caller]
@@ -299,12 +322,17 @@ impl Realtek {
             .into_iter()
             .flatten()
             .find(|b| matches!(b, pci::Bar::Memory { .. }));
-        let device = map_registers(handoff, bar, 0, 256)?;
+        // Every revision decodes 256 bytes; NBASE and extended layouts reach
+        // further. The window widens to the range detection checks, so their
+        // registers past 0xff are inside it rather than a bounds panic.
+        let window = Window(core::cell::Cell::new(map_registers(handoff, bar, 0, 256)?));
         function.enable_polled()?;
-        let txconfig = device.read32(TX_CONFIG);
-        let revision = detect_revision(&device, txconfig, |bytes| {
-            map_registers(handoff, bar, 0, bytes).map(|_| ())
+        let txconfig = window.read32(TX_CONFIG);
+        let revision = detect_revision(&window, txconfig, |bytes| {
+            window.0.set(map_registers(handoff, bar, 0, bytes)?);
+            Ok(())
         })?;
+        let device = window.0.get();
         admit_revision(function.device, pcie_link_control, revision)?;
         if tbi_mode(revision, device.read8(PHY_STATUS)) {
             return Err(BlockError::Unsupported("Realtek TBI/fiber mode").into());

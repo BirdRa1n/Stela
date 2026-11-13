@@ -139,3 +139,26 @@ fn nbase_polled_carrier_preserves_latch_low_an_restart_and_cache_expiry() {
         assert_eq!(model.state.borrow().writes.len(), writes);
     }
 }
+
+#[test]
+fn detected_nbase_layout_widens_the_real_register_window() {
+    // The constructor first maps 256 bytes. A real `Mmio` panics on any
+    // access past its window, so an NBASE start that kept that window
+    // stopped at its first register past 0xff (RTL8125 on #20, #28, #52).
+    let mut bar = alloc::vec![0u32; 0x6100 / 4];
+    bar[TX_CONFIG / 4] = 0x641 << 20;
+    let base = bar.as_mut_ptr() as u64;
+    // SAFETY: `bar` outlives every window over it, and nothing else uses it.
+    let window = Window(Cell::new(unsafe { Mmio::new(base, 256) }));
+    let revision = detect_revision(&window, window.read32(TX_CONFIG), |bytes| {
+        // SAFETY: as above; `bar` covers the requested layout.
+        window.0.set(unsafe { Mmio::new(base, bytes as usize) });
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(revision.version, 63);
+    let device = window.0.get();
+    assert_eq!(device.len(), 0x604a);
+    assert_eq!(device.read32(NBASE_MAC0_BACKUP), 0);
+    device.write16(NBASE_EEE_TXIDLE, 1);
+}
