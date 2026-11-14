@@ -359,6 +359,11 @@ unsafe fn perform(gpu: &Installed, operation: Operation) -> i64 {
             Operation::Map { fd, offset, size } => {
                 let pages = size / PAGE as usize;
                 let Some(address) = gpu.window.reserve(pages) else {
+                    // Test build: the display's mapping that fails.
+                    output::arguments(format_args!(
+                        "DIAG GPU MAP fd={fd} offset={offset:#x} size={size:#x}: window has no room
+"
+                    ));
                     return ENOMEM;
                 };
                 match client::map(fd, address, size, offset) {
@@ -368,6 +373,10 @@ unsafe fn perform(gpu: &Installed, operation: Operation) -> i64 {
                         address as i64
                     }
                     Err(error) => {
+                        output::arguments(format_args!(
+                            "DIAG GPU MAP fd={fd} offset={offset:#x} size={size:#x}: errno {error}
+"
+                        ));
                         gpu.window.release(address, pages);
                         error.into()
                     }
