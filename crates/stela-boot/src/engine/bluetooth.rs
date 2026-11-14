@@ -52,6 +52,21 @@ pub struct HostBluetooth {
     unknown: Vec<u16>,
 }
 
+/// A USB controller's close deconfigures its device through the xHCI's
+/// command ring, whose registers only the loader's root maps: dropped in
+/// the engine's root, its first register read faults.
+impl Drop for HostBluetooth {
+    fn drop(&mut self) {
+        let controller = core::mem::replace(
+            &mut self.controller,
+            Controller::Modeled { installed: false },
+        );
+        if !matches!(controller, Controller::Modeled { .. }) {
+            super::network::in_loader_root(self.root, || drop(controller));
+        }
+    }
+}
+
 impl HostBluetooth {
     /// The first controller `usb` and `pcie` hold that initialized, or the
     /// model without one.
