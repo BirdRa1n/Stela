@@ -278,7 +278,14 @@ impl Prepared {
                     space,
                     reserved: 0,
                     minimum: descriptor.address_min,
-                    maximum: descriptor.address_max,
+                    // Minimum and length give the range; AMI reports an
+                    // alignment as the descriptor's maximum.
+                    maximum: stela_boot_core::ecam::RootWindow::descriptor_maximum(
+                        descriptor.address_min,
+                        descriptor.address_max,
+                        descriptor.address_length,
+                    )
+                    .ok_or_else(|| refuse!("MMIO root resource range overflows"))?,
                     translation: descriptor.translation_offset,
                     length: descriptor.address_length,
                 };
