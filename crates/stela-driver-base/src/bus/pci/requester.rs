@@ -306,6 +306,8 @@ const INERT: [u16; 17] = [
 ];
 /// SR-IOV: inert while its virtual functions, which are requesters, are off.
 const SRIOV: u16 = 0x10;
+/// MSI Message Control's Extended Message Data Capable bit (PCIe 4.0).
+const MSI_EXTENDED_DATA_CAPABLE: u16 = 1 << 9;
 /// `PCI_SRIOV_CTRL`, and its `PCI_SRIOV_CTRL_VFE`.
 const SRIOV_CONTROL: u16 = 8;
 const SRIOV_VF_ENABLE: u16 = 1;
@@ -336,7 +338,13 @@ fn standard<C: ConfigSpace>(config: &C, status: u16) -> Result<(), ClaimError> {
                 let flags = inactive(config, offset + 2, 1)?;
                 let supported = (flags >> 1) & 7;
                 let selected = (flags >> 4) & 7;
-                if flags & !0x1ff != 0 || supported > 5 || selected > supported {
+                // Bit 9, Extended Message Data Capable, only says the function
+                // could take 32-bit message data (NVIDIA's Blackwell GPUs set
+                // it); its Enable, bit 10, must stay clear like every other.
+                if flags & !(0x1ff | MSI_EXTENDED_DATA_CAPABLE) != 0
+                    || supported > 5
+                    || selected > supported
+                {
                     return Err(ClaimError::MalformedCapability { offset });
                 }
             }

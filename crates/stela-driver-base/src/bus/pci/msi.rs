@@ -26,6 +26,10 @@ const MMC: u16 = 7 << 1;
 const MME: u16 = 7 << 4;
 const WIDE: u16 = 1 << 7;
 const MASK_CAPABLE: u16 = 1 << 8;
+/// Extended Message Data Capable (PCIe 4.0): the function could take 32-bit
+/// message data. Read-only; its Enable, bit 10, is never set here, so the
+/// function sends the 16-bit data this driver programs.
+const EXTENDED_DATA_CAPABLE: u16 = 1 << 9;
 const MSIX_ENABLE: u16 = 1 << 15;
 static QUARANTINED: AtomicU64 = AtomicU64::new(0);
 
@@ -173,9 +177,13 @@ fn discover<C: MsiConfigSpace>(f: &mut Function<C>) -> Result<(Layout, u16), Msi
                     return Err(MsiError::MalformedCapability);
                 }
                 let control = read16(c, offset + 2)?;
-                // Extended message data and reserved queue encodings need their
-                // own contract; never truncate them to a successful 16-bit MSI.
-                if control & !(ENABLE | MMC | MME | WIDE | MASK_CAPABLE) != 0
+                // Extended message data in use (its Enable, bit 10) and reserved
+                // queue encodings need their own contract; never truncate them
+                // to a successful 16-bit MSI. Its Capable bit alone, which
+                // NVIDIA's Blackwell GPUs set, leaves the function on 16-bit
+                // data while Enable stays clear, as Linux leaves it.
+                if control & !(ENABLE | MMC | MME | WIDE | MASK_CAPABLE | EXTENDED_DATA_CAPABLE)
+                    != 0
                     || (control & MMC) >> 1 > 5
                     || (control & MME) >> 4 > (control & MMC) >> 1
                 {

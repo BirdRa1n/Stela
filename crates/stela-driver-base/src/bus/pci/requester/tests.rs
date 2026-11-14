@@ -342,6 +342,22 @@ fn device_identity_interrupt_gating_and_header_are_observed_not_assumed() {
     );
 }
 
+/// NVIDIA's RTX 5070 (10de:2f04, GB205): MSI at 0x48 with Message Control
+/// 0x0388, 16 vectors, 64-bit, per-vector masking and Extended Message Data
+/// Capable. The Capable bit is accepted; its Enable, bit 10, is refused.
+#[test]
+fn msi_extended_message_data_capable_is_accepted_and_enabled_is_refused() {
+    let mut function = endpoint();
+    cap(&mut function, 0x48, MSI, 0);
+    function.config().write16(0x4a, 0x0388).unwrap();
+    assert_eq!(validate_stopped(&mut function), Ok(()));
+    function.config().write16(0x4a, 0x0588).unwrap();
+    assert_eq!(
+        validate_stopped(&mut function),
+        Err(ClaimError::MalformedCapability { offset: 0x48 })
+    );
+}
+
 #[test]
 fn msi_layouts_pcie_versions_and_no_snoop_require_complete_extents() {
     for (flags, length) in [(0, 10), (0x80, 14), (0x100, 20), (0x180, 24)] {

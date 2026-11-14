@@ -57,7 +57,8 @@ fn capability_admission_preflight() {
                     MsiError::MalformedCapability
                 }
                 _ => {
-                    m.put(0x52, 2, 1 << 9);
+                    // Extended Message Data Enable: in use, which needs its own contract.
+                    m.put(0x52, 2, 1 << 10);
                     MsiError::Unsupported
                 }
             }
