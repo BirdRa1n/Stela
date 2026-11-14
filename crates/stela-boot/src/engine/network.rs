@@ -61,8 +61,9 @@ impl Drop for Links {
 /// adapters' registers and DMA pages: dropping an adapter can drive its
 /// device (`Igc` stops its controller), and outside that root its first
 /// register access faults. A processor already inside the host drivers
-/// (`storage::open`'s probe) is in that root and holds their lock.
-fn in_loader_root(root: u64, release: impl FnOnce()) {
+/// (`storage::open`'s probe) is in that root and holds their lock. The
+/// host's Bluetooth and USB controllers are released the same way.
+pub(super) fn in_loader_root(root: u64, release: impl FnOnce()) {
     let _root = (!super::storage::host_drivers_held_here()).then(|| {
         // SAFETY: the loader root `storage::open` captured, which maps the
         // adapters; the processor's pinned record is active, as for every

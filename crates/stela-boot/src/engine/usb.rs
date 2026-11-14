@@ -145,6 +145,21 @@ pub struct HostUsb {
     last: u64,
 }
 
+/// The class owners and hosts deconfigure their devices as they drop,
+/// through registers only the loader's root maps.
+impl Drop for HostUsb {
+    fn drop(&mut self) {
+        // In the fields' own drop order.
+        let owners = (
+            core::mem::take(&mut self.hosts),
+            core::mem::take(&mut self.usb4),
+            core::mem::take(&mut self.kept),
+            core::mem::take(&mut self._storage),
+        );
+        super::network::in_loader_root(self.root, || drop(owners));
+    }
+}
+
 impl HostUsb {
     pub fn new(
         hosts: Vec<xhci::Host>,
