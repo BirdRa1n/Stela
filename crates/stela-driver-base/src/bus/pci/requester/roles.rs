@@ -231,14 +231,35 @@ fn function(
                 _ => value,
             })
         });
+        let mut malformed = None;
         for entry in ExtendedCapabilities::new(transport) {
-            let entry = entry.map_err(|error| match error {
-                CapabilityError::Config { error, .. } => Issue::Config { address, error },
-                error => Issue::Capability { address, error },
-            })?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(CapabilityError::Malformed { offset }) => {
+                    malformed = Some(offset);
+                    break;
+                }
+                Err(CapabilityError::Config { error, .. }) => {
+                    return Err(Issue::Config { address, error });
+                }
+                Err(error) => return Err(Issue::Capability { address, error }),
+            };
             if entry.id == SRIOV && (entry.version != 1 || sriov.replace(entry.offset).is_some()) {
                 return Err(Issue::Sriov(address));
             }
+        }
+        // An all-zero header ends the list here, as in Linux's walk, whose
+        // next pointer 0 stops it: AMD's Starship/Matisse root complex
+        // (1022:1480) links its one entry at 0x100 to an empty dword at
+        // 0x148. The census only looks for SR-IOV; a claim's own walk still
+        // refuses such a link.
+        if let Some(offset) = malformed
+            && read32(address, offset).map_err(|error| Issue::Config { address, error })? != Some(0)
+        {
+            return Err(Issue::Capability {
+                address,
+                error: CapabilityError::Malformed { offset },
+            });
         }
     }
     let virtuals = if let Some(at) = sriov {
@@ -346,6 +367,29 @@ mod tests {
             assert_eq!(result.err(), Some(denied));
             assert_eq!(observed, fault, "no read after denied original permission");
         }
+    }
+    /// AMD's 1022:1480 root complex, as its configuration reads: one
+    /// extended entry at 0x100 (ID 0x1022) whose next pointer, 0x148,
+    /// reaches an all-zero dword. The list ends there, as in Linux.
+    #[test]
+    fn an_all_zero_extended_header_ends_the_census_walk() {
+        let host = at(0, 0);
+        let mut words = [0; 1024];
+        words[0] = 0x1480_1022;
+        words[2] = 0x0600_0000;
+        words[0x100 / 4] = 0x1480_1022;
+        let spaces = BTreeMap::from([(host, words), (PF, plain())]);
+        let inventory = capture(&spaces);
+        assert!(inventory.issues().is_empty());
+        assert_eq!(inventory.role(host), FunctionRole::Physical);
+        assert_eq!(inventory.role(PF), FunctionRole::Physical);
+        // A non-zero entry the walk refuses there still refuses the census.
+        let mut entry = words;
+        entry[0x148 / 4] = 0x0001_000b; // vendor-specific, no length
+        let spaces = BTreeMap::from([(host, entry)]);
+        let inventory = capture(&spaces);
+        assert!(!inventory.issues().is_empty());
+        assert_eq!(inventory.role(host), FunctionRole::Unverified);
     }
     #[test]
     fn vfs_without_local_capabilities_are_classified_from_their_pf_across_a_bus_boundary() {
