@@ -184,6 +184,30 @@ fn read(
         .filter(|value| *value != u32::MAX)
         .ok_or(Issue::Read { address, offset })
 }
+/// Linux's `pci_ext_cfg_is_aliased`: extended configuration space whose
+/// every 256-byte page starts with the function's own vendor and device
+/// identity mirrors the standard space and holds no extended capability
+/// list. AMD's Starship/Matisse root complex (1022:1480) does this: read as
+/// a list, 0x100's identity 0x14801022 names a next entry at 0x148, the
+/// mirror of 0x48.
+fn aliased(
+    address: Address,
+    identity: u32,
+    first: u32,
+    read32: &mut impl FnMut(Address, u16) -> Result<Option<u32>, crate::bus::pci::ConfigError>,
+) -> Result<bool, Issue> {
+    if first != identity {
+        return Ok(false);
+    }
+    for page in 2..16u16 {
+        let offset = page * 0x100;
+        let value = read32(address, offset).map_err(|error| Issue::Config { address, error })?;
+        if value != Some(identity) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
 fn fields(
     read32: &mut impl FnMut(Address, u16) -> Result<Option<u32>, crate::bus::pci::ConfigError>,
     address: Address,
@@ -220,7 +244,7 @@ fn function(
             offset: 0x100,
         })?;
     let mut sriov = None;
-    if first != u32::MAX {
+    if first != u32::MAX && !aliased(address, identity, first, read32)? {
         let transport = Transport(|offset: u16, bytes: u8| {
             let value = read32(address, offset & !3)
                 .map_err(|error| CapabilityError::Config { offset, error })?
@@ -346,6 +370,39 @@ mod tests {
             assert_eq!(result.err(), Some(denied));
             assert_eq!(observed, fault, "no read after denied original permission");
         }
+    }
+    /// AMD's 1022:1480 root complex: every 256-byte page of extended space
+    /// mirrors the standard header, as Linux's alias check finds. Read as a
+    /// list, 0x100 would point at 0x148, whose mirror of 0x48 is no entry.
+    fn aliased_root_complex(pages: usize) -> [u32; 1024] {
+        let mut words = [0; 1024];
+        words[0] = 0x1480_1022;
+        words[2] = 0x0600_0000;
+        for page in 1..pages {
+            words.copy_within(0..64, page * 64);
+        }
+        words
+    }
+    #[test]
+    fn extended_space_that_mirrors_the_header_holds_no_capability_list() {
+        let host = at(0, 0);
+        let spaces = BTreeMap::from([(host, aliased_root_complex(16)), (PF, plain())]);
+        let inventory = capture(&spaces);
+        assert!(inventory.issues().is_empty());
+        assert_eq!(inventory.role(host), FunctionRole::Physical);
+        assert_eq!(inventory.role(PF), FunctionRole::Physical);
+        // A mirror of only some pages is no alias: the list is walked, and
+        // its entry at 0x148 is refused as before.
+        let spaces = BTreeMap::from([(host, aliased_root_complex(2))]);
+        let inventory = capture(&spaces);
+        assert!(matches!(
+            inventory.issues(),
+            [Issue::Capability {
+                error: CapabilityError::Malformed { offset: 0x148 },
+                ..
+            }]
+        ));
+        assert_eq!(inventory.role(host), FunctionRole::Unverified);
     }
     #[test]
     fn vfs_without_local_capabilities_are_classified_from_their_pf_across_a_bus_boundary() {
