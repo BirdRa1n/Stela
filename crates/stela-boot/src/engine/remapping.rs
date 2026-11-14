@@ -310,6 +310,22 @@ impl Remappers {
                         }
                     }
                 }
+                // Test build: every display function's standard header and
+                // capabilities, and the start of its extended space.
+                for &address in &functions {
+                    if reader
+                        .read32(address, 8)
+                        .ok()
+                        .is_some_and(|class| class >> 24 == 3)
+                    {
+                        let mut line = alloc::format!("DIAG GPU {address:?} config");
+                        for offset in (0u16..0x100).step_by(4).chain((0x100..0x200).step_by(4)) {
+                            let word = reader.read32(address, offset).ok();
+                            line.push_str(&alloc::format!(" {offset:03x}={word:08x?}"));
+                        }
+                        output::arguments(format_args!("{line}\n"));
+                    }
+                }
                 pci.check_stopped(reader)
                     .map(|()| (inventories, identities, roles))
             })
