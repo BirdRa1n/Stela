@@ -717,13 +717,41 @@ impl Source {
                 maximum: root.maximum,
                 translation: root.translation,
             });
-        let physical = aperture::bar_physical(windows, u32::from(segment), address, bytes)
-            .ok_or(Error::OutsideResource)?;
+        // Test build: why a BAR is refused, with every root window.
+        let diag = |why: &str| {
+            let mut line = alloc::format!(
+                "DIAG BAR segment={segment} address={address:#x} bytes={bytes:#x} prefetchable={prefetchable} {why}:"
+            );
+            for root in wire.roots() {
+                line.push_str(&alloc::format!(
+                    " [seg={} bridge={} space={} min={:#x} max={:#x} len={:#x} xlat={:#x} flags={:#x}/{:#x}]",
+                    root.segment,
+                    root.bridge,
+                    root.space,
+                    root.minimum,
+                    root.maximum,
+                    root.length,
+                    root.translation,
+                    root.flags,
+                    root.specific
+                ));
+            }
+            crate::output::arguments(format_args!("{line}\n"));
+        };
+        let Some(physical) = aperture::bar_physical(windows, u32::from(segment), address, bytes)
+        else {
+            diag("no root window");
+            return Err(Error::OutsideResource);
+        };
         let span = PhysicalSpan::new(physical, bytes)?;
         if !span.start().is_multiple_of(PAGE) || !span.bytes().is_multiple_of(PAGE) {
             return Err(Error::InvalidRange);
         }
         if !wire.excludes_memory(span.start(), span.end()) {
+            diag(&alloc::format!(
+                "overlaps the memory map at {:x?}",
+                wire.memory_conflict(span.start(), span.end())
+            ));
             return Err(Error::OutsideResource);
         }
         self.reserve(
