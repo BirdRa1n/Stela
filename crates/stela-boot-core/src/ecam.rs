@@ -24,6 +24,20 @@ pub struct RootWindow {
 }
 
 impl RootWindow {
+    /// The last address of a root bridge's resource descriptor: its
+    /// minimum and length. The descriptor's own maximum is not that on
+    /// every firmware: AMI's PciRootBridgeIo `Configuration` reports the
+    /// range's alignment there, as the resource allocation protocol uses
+    /// it (an ASRock B550M's memory window reads min 0xf8000000, max
+    /// 0x3ffffff, length 0x4a00000). A descriptor without a length keeps
+    /// its maximum; one whose length overflows has none.
+    pub fn descriptor_maximum(minimum: u64, maximum: u64, length: u64) -> Option<u64> {
+        if length == 0 {
+            return Some(maximum);
+        }
+        minimum.checked_add(length - 1)
+    }
+
     fn buses(&self) -> Option<RangeInclusive<u8>> {
         (self.space == 2
             && self.translation == 0
@@ -215,6 +229,28 @@ impl<'a> EcamInventory<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ASRock B550M Steel Legend (AMI): the root bridge's descriptors as
+    /// `Configuration` reports them, the memory and I/O maxima holding
+    /// alignments; the bus range's maximum is its last bus.
+    #[test]
+    fn a_descriptor_ends_at_its_minimum_plus_length() {
+        let last = RootWindow::descriptor_maximum;
+        assert_eq!(last(0xf800_0000, 0x3ff_ffff, 0x4a0_0000), Some(0xfc9f_ffff));
+        assert_eq!(
+            last(0x78_0000_0000, 0x3_ffff_ffff, 0x4_0200_0000),
+            Some(0x7c_01ff_ffff)
+        );
+        assert_eq!(last(0xe000, 0xfff, 0x2000), Some(0xffff));
+        assert_eq!(last(0, 9, 0xa), Some(9));
+        // EDK2's maximum is the limit already; no length keeps it.
+        assert_eq!(
+            last(0xc000_0000, 0xfeaf_ffff, 0x3eb0_0000),
+            Some(0xfeaf_ffff)
+        );
+        assert_eq!(last(0x1000, 0x1fff, 0), Some(0x1fff));
+        assert_eq!(last(u64::MAX, 0, 2), None);
+    }
 
     fn window(base: u64, segment: u16, first: u8, last: u8) -> EcamWindow {
         EcamWindow {
