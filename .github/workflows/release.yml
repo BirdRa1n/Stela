@@ -211,6 +211,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Collect the linker map
+        run: |
+          mkdir -p dist/map
+          find target/boot -name '*.map' -exec cp {} dist/map/ \; || true
+          ls -l dist/map
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stela-efi-map
+          path: dist/map
+          if-no-files-found: warn
+          retention-days: 7
+
   cli:
     needs: [version, efi]
     strategy:
