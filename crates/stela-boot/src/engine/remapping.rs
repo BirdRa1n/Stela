@@ -288,6 +288,28 @@ impl Remappers {
                         .map(Some)
                         .map_err(|error| ConfigError::before_effect(ConfigFailure::Mapping(error)))
                 });
+                // Test build: the configuration words behind a refused
+                // capability list, to read what the function holds.
+                if let Ok(inventory) = &roles {
+                    for issue in inventory.issues() {
+                        if let roles::Issue::Capability { address, .. } = issue {
+                            let mut line = alloc::format!("DIAG PCI {address:?} config");
+                            for offset in (0u16..0x40).step_by(4).chain((0x100..0x180).step_by(4)) {
+                                let word = reader.read32(*address, offset).ok();
+                                line.push_str(&alloc::format!(" {offset:03x}={word:08x?}"));
+                            }
+                            for page in 2..16u16 {
+                                let word = reader.read32(*address, page * 0x100).ok();
+                                line.push_str(&alloc::format!(" {:03x}={word:08x?}", page * 0x100));
+                            }
+                            for offset in (0x40u16..0x60).step_by(4) {
+                                let word = reader.read32(*address, offset).ok();
+                                line.push_str(&alloc::format!(" {offset:03x}={word:08x?}"));
+                            }
+                            output::arguments(format_args!("{line}\n"));
+                        }
+                    }
+                }
                 pci.check_stopped(reader)
                     .map(|()| (inventories, identities, roles))
             })
