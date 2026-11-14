@@ -866,6 +866,35 @@ fn containment_seals_a_root_bus_host_bridge_whose_bus_master_is_hardwired() {
     assert!(plan.check_disabled(|offset| config.read16(offset)).is_err());
 }
 
+/// AMD's FCH LPC bridge (1022:790e, class 0601) on the root bus: COMMAND
+/// reads 0x000f and its Bus Master bit stays set when written clear. Like
+/// a root-bus host bridge it is proven hard-wired and sealed; behind a
+/// downstream port the same function is refused.
+#[test]
+fn containment_seals_a_root_bus_isa_bridge_whose_bus_master_is_hardwired() {
+    let isa_bridge = || {
+        let mut function = host_bridge(0x000f, regs::COMMAND_MASTER);
+        let config = function.config();
+        config.command_fixed = 0;
+        config.write32(8, 0x0601_0051).unwrap();
+        config.write16(regs::COMMAND, 0x000f).unwrap();
+        config.command_fixed = regs::COMMAND_MASTER;
+        function
+    };
+    let mut function = isa_bridge();
+    let config = function.config();
+    assert_eq!(contain(config, true), Ok(()));
+    assert_eq!(
+        config.read16(regs::COMMAND).unwrap() & regs::COMMAND_MASTER,
+        regs::COMMAND_MASTER
+    );
+    assert!(config.master_sealed);
+    let mut function = isa_bridge();
+    let config = function.config();
+    assert!(contain(config, false).is_err());
+    assert!(!config.master_sealed);
+}
+
 /// A class-0600 function behind a downstream port, and any other function,
 /// whose Bus Master bit stays set is refused.
 #[test]

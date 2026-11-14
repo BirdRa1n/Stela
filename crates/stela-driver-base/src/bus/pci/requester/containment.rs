@@ -13,6 +13,9 @@ use core::cell::RefCell;
 
 /// The class and subclass of a host bridge.
 const HOST_BRIDGE: u32 = 0x0600;
+/// The class and subclass of an ISA bridge: on a root bus, the chipset's
+/// own LPC bridge.
+const ISA_BRIDGE: u32 = 0x0601;
 
 #[derive(Clone, Copy)]
 struct Control {
@@ -23,7 +26,7 @@ struct Control {
     /// regs::command_optional_bits); every other bit must read back exactly.
     optional: u16,
     /// Bits of `original` that `disabled` clears and hardware may hold set:
-    /// only the Bus Master bit of a root-bus host bridge.
+    /// only the Bus Master bit of a root-bus host or ISA bridge.
     hardwired: u16,
 }
 
@@ -49,13 +52,15 @@ impl Plan {
         }
         // INTx Disable is asked of every function and required of those with
         // an INTx pin; Bus Master is cleared on all of them and must read
-        // back clear, except on a host bridge on a root bus (the root
-        // complex's own function): Intel's hard-wire its Bus Master bit set,
-        // and Linux never writes it. There a set bit that stays set is the
+        // back clear, except on a host bridge or ISA bridge on a root bus
+        // (the root complex's own functions): Intel's host bridges and AMD's
+        // FCH LPC bridge (1022:790e) hard-wire their Bus Master bit set, and
+        // Linux never writes it. There a set bit that stays set is the
         // hardware's, and the seal proves it ([`Plan::seal`]). A function
-        // of that class behind a downstream port is contained like any other.
+        // of either class behind a downstream port is contained like any
+        // other.
         let class = read(regs::CLASS_REVISION, 4)? >> 8;
-        let hardwired = if root_bus && class >> 8 == HOST_BRIDGE {
+        let hardwired = if root_bus && matches!(class >> 8, HOST_BRIDGE | ISA_BRIDGE) {
             command & regs::COMMAND_MASTER
         } else {
             0
@@ -218,7 +223,7 @@ impl Plan {
     /// Acknowledge a contained function: its controls read back stopped,
     /// then its Bus Master bit is sealed. A clear bit is sealed as clear.
     /// A set bit is accepted only where this plan lets hardware hold it
-    /// (a root-bus host bridge whose bit was set) and only once the seal
+    /// (a root-bus host or ISA bridge whose bit was set) and only once the seal
     /// proves it hard-wired; anything else is refused.
     pub fn seal(&self, config: &mut impl MasterSeal) -> Result<(), ConfigError> {
         self.check_disabled(|offset| config.read16(offset))?;
